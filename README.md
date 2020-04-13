@@ -23,3 +23,6 @@ This task is scheduled with Windows Task Scheduler:
 
 ### Final Result
 ![Generated Spotify Playlist](img/spotify-playlist.png "Generated Spotify Playlist")
+
+### Run With Docker
+docker run --rm -v /path/to/script.db:/app/script.db furman91/spotify_playlist_generator:latest

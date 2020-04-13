@@ -3,6 +3,7 @@ import requests
 from bs4 import BeautifulSoup
 import urllib.parse
 import datetime
+import telegram
 
 # ====================== METHOD DEFINITIONS ========================
 
@@ -119,12 +120,11 @@ def getTrueSongName(songName):
     return trueSongName
 
 # builds a new playlist on my Spotify account w/ tracks corresponding to provided song ids
-def createPlaylist(songIds):
+def createPlaylist(songIds, monthName):
     # initialize playlist
-    todaysDate = getTodaysDate()
     c.execute("SELECT value FROM tokens WHERE token_type = 'spotify_id'")
     spotifyUserId = c.fetchone()[0]
-    playlistName = 'New Songs {}'.format(todaysDate)
+    playlistName = 'New Songs {}'.format(monthName)
 
     reqHeader = {'Authorization': 'Bearer {}'.format(spotifyToken), 'Content-Type': 'application/json'}
     reqBody = {'name': playlistName, 'description': 'This playlist was built by a script.  See how it works at: https://github.com/mileshenrichs/spotify-playlist-generator'}
@@ -137,7 +137,8 @@ def createPlaylist(songIds):
         conn.commit()
     
     # add tracks to playlist
-    addTracksToPlaylist(newPlaylistId, playlistName, songIds)
+    if songIds:
+        addTracksToPlaylist(newPlaylistId, playlistName, songIds)
 
 # place tracks with given ids into Spotify playlist with given id and name
 def addTracksToPlaylist(playlistId, playlistName, songIds):
@@ -152,9 +153,12 @@ def addTracksToPlaylist(playlistId, playlistName, songIds):
         res = r.json()
         songName = res['name']
         songPrimaryArtist = res['artists'][0]['name']
-        
+        albumPhotoUrl = res['album']['images'][-2]['url']
+
         # create entry in db
-        c.execute("INSERT INTO songs_added VALUES (?, ?, ?, datetime('now', 'localtime'))", (songName, songPrimaryArtist, playlistName))
+        c.execute("INSERT INTO songs_added VALUES (?, ?, ?, datetime('now', 'localtime'), ?)", (songName, songPrimaryArtist, playlistName, songId))
+        # bot.send_photo(chat_id='', photo=albumPhotoUrl,
+        #                caption=f"\"{songPrimaryArtist} - {songName}\" Added to {playlistName}")
     conn.commit()
 
     # send request to add tracks to Spotify playlist
@@ -167,10 +171,13 @@ def addTracksToPlaylist(playlistId, playlistName, songIds):
 
 # ====================== BEGIN SCRIPT ========================
 
+# bot = telegram.Bot(token='')
+
+
 # define desired artists list
-desiredArtists = ['Future', '21 Savage', 'Travis Scott', 'Drake', 'Lil Baby', 'Lil Uzi Vert', 'Rae Sremmurd', 'Big Sean', 'Dave East', 
-    'Cardi B', 'Offset', 'Young Thug', 'Swae Lee', 'The Weeknd', 'Desiigner', 'Joyner Lucas', 'Post Malone', 'Vory', 'Lil Pump', 
-    'Kevin Gates', 'Jay Critch', 'Rich The Kid', 'Quavo', 'Migos', 'Tory Lanez', 'Meek Mill', 'A$AP Rocky', 'Jazz Cartier', 
+desiredArtists = ['Future', '21 Savage', 'Drake', 'Lil Baby', 'Lil Uzi Vert', 'Rae Sremmurd', 'Big Sean', 'Dave East',
+    'Cardi B', 'Offset', 'Young Thug', 'Swae Lee', 'The Weeknd', 'Desiigner', 'Joyner Lucas', 'Post Malone', 'Vory',
+    'Kevin Gates', 'Jay Critch', 'Rich The Kid', 'Quavo', 'Migos', 'Tory Lanez', 'A$AP Rocky', 'Jazz Cartier',
     'Kodak Black', '6LACK', 'Madeintyo']
 # sort list (for binary search later)
 desiredArtists.sort()
@@ -219,29 +226,30 @@ for songHtml in soup.find_all('div', class_='chartItem-body-artist'):
 songIdsToAdd = []
 
 for candidate in songCandidates:
-    # make sure song hasn't already been added to previous playlist
-    isDuplicate = False
-    c.execute("SELECT * FROM songs_added WHERE song_name LIKE ?", (candidate[0] + '%',))
-    for row in c.fetchall():
-        trueSongName = getTrueSongName(row[0])
-        if normalizeNames(trueSongName) == normalizeNames(candidate[0]) and normalizeNames(row[1]) in normalizeNames(candidate[1]):
-            isDuplicate = True
-    if isDuplicate: # skip over this song if it's a duplicate
-        continue
-
     # find song id on Spotify via search endpoint
     songId = findSong(candidate[0], candidate[1])
+
     if songId:
+        # make sure song hasn't already been added to previous playlist
+        isDuplicate = False
+        c.execute("SELECT * FROM songs_added WHERE song_name LIKE ?", (candidate[0] + '%',))
+        for row in c.fetchall():
+            trueSongName = getTrueSongName(row[0])
+            dbSongId = row[4]
+            if (normalizeNames(trueSongName) == normalizeNames(candidate[0]) and normalizeNames(row[1]) in normalizeNames(candidate[1])) or songId == dbSongId:
+                isDuplicate = True
+        if isDuplicate: # skip over this song if it's a duplicate
+            continue
+
         songIdsToAdd.append(songId)
 
-# determine day of week
-dayOfWeek = int(datetime.datetime.today().strftime('%u'))
-# new playlist if it's Saturday, else add to most recent playlist
-if dayOfWeek == 6:
-    createPlaylist(list(set(songIdsToAdd))) # make sure all songs are unique
+# determine Month Name
+monthName = datetime.datetime.now().strftime("%B")
+c.execute("SELECT spotify_playlist_id, playlist_name FROM playlists_created WHERE playlist_name = ?", ('New Songs {}'.format(monthName),))
+currentPlaylist = c.fetchone()
+if not currentPlaylist:
+    createPlaylist(list(set(songIdsToAdd)), monthName)  # make sure all songs are unique
 else:
-    c.execute("SELECT spotify_playlist_id, playlist_name FROM playlists_created WHERE id = (SELECT MAX(id) FROM playlists_created)")
-    currentPlaylist = c.fetchone()
     addTracksToPlaylist(currentPlaylist[0], currentPlaylist[1], songIdsToAdd)
 
 # close cursor and SQLite db connection
