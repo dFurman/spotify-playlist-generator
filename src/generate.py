@@ -4,6 +4,7 @@ from bs4 import BeautifulSoup
 import urllib.parse
 import datetime
 import telegram
+from sys import exit
 
 # ====================== METHOD DEFINITIONS ========================
 
@@ -242,6 +243,10 @@ for candidate in songCandidates:
             continue
 
         songIdsToAdd.append(songId)
+
+if not songIdsToAdd:
+    # bot.send_message(chat_id='', text='Sorry... Nothing for Today :\\')
+    exit(0)
 
 # determine Month Name
 monthName = datetime.datetime.now().strftime("%B")
